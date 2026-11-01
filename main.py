@@ -15,6 +15,20 @@ def main(page: ft.Page):
     page.padding = 20
     page.bgcolor = "#1a1a1a"
 
+    def crear_texto_enriquecido(texto_html, size=16):
+        partes = texto_html.split("<b>")
+        spans = [ft.TextSpan(partes[0])]
+        
+        for parte in partes[1:]:
+            if "</b>" in parte:
+                negrita, resto = parte.split("</b>", 1)
+                spans.append(ft.TextSpan(negrita, style=ft.TextStyle(weight=ft.FontWeight.BOLD, color="yellow")))
+                spans.append(ft.TextSpan(resto))
+            else:
+                spans.append(ft.TextSpan(parte))
+                
+        return ft.Text(spans=spans, size=size, color="white", text_align=ft.TextAlign.JUSTIFY)
+
     def mostrar_mapa():
         page.controls.clear()
 
@@ -39,20 +53,15 @@ def main(page: ft.Page):
                 on_click = None
 
             nodo = ft.Container(
-                content=icono,
-                width=80, height=80,
-                bgcolor=bgcolor,
-                border_radius=40,
-                alignment=ft.Alignment.CENTER,
-                on_click=on_click,
-                ink=True
+                content=icono, width=80, height=80, bgcolor=bgcolor,
+                border_radius=40, alignment=ft.Alignment.CENTER,
+                on_click=on_click, ink=True
             )
 
             if i < 5:
                 conector = ft.Container(
                     content=ft.Icon(ft.Icons.SOUTH, color="#555555", size=30),
-                    alignment=ft.Alignment.CENTER,
-                    padding=ft.Padding(0, 10, 0, 10)
+                    alignment=ft.Alignment.CENTER, padding=ft.Padding(0, 10, 0, 10)
                 )
                 nodos.append(nodo)
                 nodos.append(conector)
@@ -62,21 +71,13 @@ def main(page: ft.Page):
         btn_examen = None
         if len(estado['temas_aprendidos']) >= 5:
             btn_examen = ft.Button(
-                "Hacer Examen de Repaso",
-                bgcolor="purple",
-                color="white",
+                "Hacer Examen de Repaso", bgcolor="purple", color="white",
                 on_click=lambda e: iniciar_examen()
             )
 
         page.add(
             header,
-            ft.Column(
-                nodos,
-                alignment=ft.MainAxisAlignment.CENTER,
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                scroll=ft.ScrollMode.AUTO,
-                expand=True
-            ),
+            ft.Column(nodos, alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, scroll=ft.ScrollMode.AUTO, expand=True),
             btn_examen if btn_examen else ft.Container()
         )
         page.update()
@@ -86,31 +87,30 @@ def main(page: ft.Page):
         page.add(
             ft.Column([
                 ft.ProgressRing(),
-                ft.Text("Buscando una nueva historia...", color="white")
+                ft.Text("Buscando un dato alucinante...", color="white")
             ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, expand=True)
         )
         page.update()
 
-        contenido = ia.generar_microaprendizaje(estado['nivel_actual'])
+        # --- AQUÍ ESTÁ LA CORRECCIÓN: Se pasan los dos argumentos ---
+        contenido = ia.generar_microaprendizaje(estado['nivel_actual'], estado['temas_aprendidos'])
         estado['contenido_actual'] = contenido
 
         page.controls.clear()
 
         img_control = None
         if contenido.get("imagen_url"):
-            # Corregido: Usamos BoxFit.COVER en lugar de ImageFit
             img_control = ft.Image(
-                src=contenido["imagen_url"],
-                width=400, height=220, # Un poco más grande
-                fit=ft.BoxFit.COVER,
-                border_radius=15
+                src=contenido["imagen_url"], width=400, height=220,
+                fit=ft.BoxFit.COVER, border_radius=15
             )
 
         page.add(
             ft.Column([
                 ft.Text(contenido["titulo"], size=26, weight=ft.FontWeight.BOLD, color="white", text_align=ft.TextAlign.CENTER),
                 img_control if img_control else ft.Container(),
-                ft.Text(contenido["texto"], size=16, color="white", text_align=ft.TextAlign.JUSTIFY),
+                ft.Container(height=10),
+                crear_texto_enriquecido(contenido["texto"]),
                 ft.Container(height=20),
                 ft.Button(
                     content=ft.Text("Finalizar Aprendizaje", color="black", weight=ft.FontWeight.BOLD),
@@ -122,7 +122,9 @@ def main(page: ft.Page):
         page.update()
 
     def completar_nivel(titulo):
-        estado['temas_aprendidos'].append(titulo)
+        if titulo not in estado['temas_aprendidos']:
+            estado['temas_aprendidos'].append(titulo)
+            
         estado['estrellas'] += 1
         estado['nivel_actual'] += 1
 
@@ -156,7 +158,7 @@ def main(page: ft.Page):
         
         for idx, p in enumerate(quiz_data.get("preguntas", [])):
             controles_examen.append(ft.Text(f"{idx+1}. {p['pregunta']}", color="white", weight=ft.FontWeight.BOLD))
-            controles_examen.append(ft.TextField(hint_text="Escribe tu respuesta aquí...", width=400, multiline=True))
+            controles_examen.append(ft.TextField(hint_text="Escribe tu respuesta...", width=400, multiline=True))
             controles_examen.append(ft.Container(height=10))
 
         controles_examen.append(ft.Container(height=20))
