@@ -28,7 +28,7 @@ def normalizar(s):
 
 
 def main(page: ft.Page):
-    page.title = "Cultura General"
+    page.title = "GenK"
     page.theme_mode = ft.ThemeMode.DARK
     page.bgcolor = TINTA
     page.padding = 20
