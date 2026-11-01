@@ -44,16 +44,17 @@ def main(page: ft.Page):
                 width=80, height=80,
                 bgcolor=bgcolor,
                 border_radius=40,
-                alignment=ft.Alignment.CENTER,,
+                alignment=ft.Alignment.CENTER,
                 on_click=on_click,
                 ink=True
             )
 
             if i < 5:
+                # Usamos Padding en lugar de Margin para el conector (más seguro en Flet 1.0)
                 conector = ft.Container(
                     content=ft.Icon(ft.Icons.SOUTH, color="#555555", size=30),
-                    alignment=ft.Alignment.CENTER,,
-                    margin=ft.margin.only(top=10, bottom=10)
+                    alignment=ft.Alignment.CENTER,
+                    padding=ft.Padding(0, 10, 0, 10)
                 )
                 nodos.append(nodo)
                 nodos.append(conector)
@@ -75,7 +76,8 @@ def main(page: ft.Page):
                 nodos,
                 alignment=ft.MainAxisAlignment.CENTER,
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                scroll=ft.ScrollMode.AUTO
+                scroll=ft.ScrollMode.AUTO,
+                expand=True # Para que ocupe el espacio y permita scroll en móvil
             ),
             btn_examen if btn_examen else ft.Container()
         )
@@ -83,9 +85,15 @@ def main(page: ft.Page):
 
     def iniciar_aprendizaje():
         page.controls.clear()
-        page.add(ft.ProgressRing(), ft.Text("Generando conocimiento...", color="white"))
+        page.add(
+            ft.Column([
+                ft.ProgressRing(),
+                ft.Text("Generando conocimiento...", color="white")
+            ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, expand=True)
+        )
         page.update()
 
+        # Llamada a la IA
         contenido = ia.generar_microaprendizaje(estado['nivel_actual'])
         estado['contenido_actual'] = contenido
 
@@ -101,15 +109,17 @@ def main(page: ft.Page):
             )
 
         page.add(
-            ft.Text(contenido["titulo"], size=24, weight="bold", color="white"),
-            img_control if img_control else ft.Container(),
-            ft.Text(contenido["texto"], size=16, color="white"),
-            ft.Button(
-                "Finalizar Aprendizaje",
-                bgcolor="yellow",
-                color="black",
-                on_click=lambda e: completar_nivel(contenido["titulo"])
-            )
+            ft.Column([
+                ft.Text(contenido["titulo"], size=24, weight=ft.FontWeight.BOLD, color="white"),
+                img_control if img_control else ft.Container(),
+                ft.Text(contenido["texto"], size=16, color="white"),
+                ft.Container(height=20), # Espaciador
+                ft.Button(
+                    content=ft.Text("Finalizar Aprendizaje", color="black", weight=ft.FontWeight.BOLD),
+                    bgcolor="yellow",
+                    on_click=lambda e: completar_nivel(contenido["titulo"])
+                )
+            ], scroll=ft.ScrollMode.AUTO, expand=True)
         )
         page.update()
 
@@ -120,31 +130,46 @@ def main(page: ft.Page):
 
         page.controls.clear()
         page.add(
-            ft.Icon(ft.Icons.STAR, color="yellow", size=100),
-            ft.Text("¡Nivel Completado!", size=30, color="white"),
-            ft.Text(f"Has ganado 1 estrella. Nivel {estado['nivel_actual']} desbloqueado.", color="grey"),
-            ft.Button("Volver al Mapa", on_click=lambda e: mostrar_mapa())
+            ft.Column([
+                ft.Icon(ft.Icons.STAR, color="yellow", size=100),
+                ft.Text("¡Nivel Completado!", size=30, color="white", weight=ft.FontWeight.BOLD),
+                ft.Text(f"Has ganado 1 estrella. Nivel {estado['nivel_actual']} desbloqueado.", color="grey"),
+                ft.Container(height=20),
+                ft.Button("Volver al Mapa", on_click=lambda e: mostrar_mapa())
+            ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, expand=True)
         )
         page.update()
 
     def iniciar_examen():
         page.controls.clear()
-        page.add(ft.ProgressRing(), ft.Text("Generando examen...", color="white"))
+        page.add(
+            ft.Column([
+                ft.ProgressRing(),
+                ft.Text("Generando examen...", color="white")
+            ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, expand=True)
+        )
         page.update()
 
         quiz_data = ia.generar_quiz(estado['temas_aprendidos'])
 
         page.controls.clear()
-        page.add(ft.Text("Examen de Repaso", size=24, weight="bold", color="white"))
-
+        
+        controles_examen = [ft.Text("Examen de Repaso", size=24, weight=ft.FontWeight.BOLD, color="white")]
+        
         for idx, p in enumerate(quiz_data.get("preguntas", [])):
-            page.add(ft.Text(f"{idx+1}. {p['pregunta']}", color="white"))
-            page.add(ft.TextField(hint_text="Tu respuesta...", width=300))
+            controles_examen.append(ft.Text(f"{idx+1}. {p['pregunta']}", color="white", weight=ft.FontWeight.BOLD))
+            controles_examen.append(ft.TextField(hint_text="Tu respuesta...", width=300))
+            controles_examen.append(ft.Container(height=10))
 
-        page.add(ft.Button("Volver al Mapa", on_click=lambda e: mostrar_mapa()))
+        controles_examen.append(ft.Button("Volver al Mapa", on_click=lambda e: mostrar_mapa()))
+
+        page.add(
+            ft.Column(controles_examen, scroll=ft.ScrollMode.AUTO, expand=True)
+        )
         page.update()
 
     mostrar_mapa()
 
-# Cambio clave para Flet 1.0: ft.run en lugar de ft.app
-ft.run(main, view=None, port=int(os.environ.get("PORT", 8080)))
+# Ejecución adaptada a Flet 1.0
+if __name__ == "__main__":
+    ft.run(main, view=None, port=int(os.environ.get("PORT", 8080)))
