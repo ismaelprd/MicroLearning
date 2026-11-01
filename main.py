@@ -2,7 +2,6 @@ import flet as ft
 import gemini_service as ia
 import os
 
-# Almacenamiento simple en memoria
 estado = {
     "nivel_actual": 1,
     "temas_aprendidos": [],
@@ -50,7 +49,6 @@ def main(page: ft.Page):
             )
 
             if i < 5:
-                # Usamos Padding en lugar de Margin para el conector (más seguro en Flet 1.0)
                 conector = ft.Container(
                     content=ft.Icon(ft.Icons.SOUTH, color="#555555", size=30),
                     alignment=ft.Alignment.CENTER,
@@ -77,7 +75,7 @@ def main(page: ft.Page):
                 alignment=ft.MainAxisAlignment.CENTER,
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 scroll=ft.ScrollMode.AUTO,
-                expand=True # Para que ocupe el espacio y permita scroll en móvil
+                expand=True
             ),
             btn_examen if btn_examen else ft.Container()
         )
@@ -88,12 +86,11 @@ def main(page: ft.Page):
         page.add(
             ft.Column([
                 ft.ProgressRing(),
-                ft.Text("Generando conocimiento...", color="white")
+                ft.Text("Buscando una nueva historia...", color="white")
             ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, expand=True)
         )
         page.update()
 
-        # Llamada a la IA
         contenido = ia.generar_microaprendizaje(estado['nivel_actual'])
         estado['contenido_actual'] = contenido
 
@@ -101,23 +98,24 @@ def main(page: ft.Page):
 
         img_control = None
         if contenido.get("imagen_url"):
+            # Corregido: Usamos BoxFit.COVER en lugar de ImageFit
             img_control = ft.Image(
                 src=contenido["imagen_url"],
-                width=300, height=200,
-                fit=ft.ImageFit.COVER,
-                border_radius=10
+                width=400, height=220, # Un poco más grande
+                fit=ft.BoxFit.COVER,
+                border_radius=15
             )
 
         page.add(
             ft.Column([
-                ft.Text(contenido["titulo"], size=24, weight=ft.FontWeight.BOLD, color="white"),
+                ft.Text(contenido["titulo"], size=26, weight=ft.FontWeight.BOLD, color="white", text_align=ft.TextAlign.CENTER),
                 img_control if img_control else ft.Container(),
-                ft.Text(contenido["texto"], size=16, color="white"),
-                ft.Container(height=20), # Espaciador
+                ft.Text(contenido["texto"], size=16, color="white", text_align=ft.TextAlign.JUSTIFY),
+                ft.Container(height=20),
                 ft.Button(
                     content=ft.Text("Finalizar Aprendizaje", color="black", weight=ft.FontWeight.BOLD),
                     bgcolor="yellow",
-                    on_click=lambda e: completar_nivel(contenido["titulo"])
+                    on_click=lambda e: completar_nivel(contenido.get("titulo", "Tema desconocido"))
                 )
             ], scroll=ft.ScrollMode.AUTO, expand=True)
         )
@@ -158,9 +156,10 @@ def main(page: ft.Page):
         
         for idx, p in enumerate(quiz_data.get("preguntas", [])):
             controles_examen.append(ft.Text(f"{idx+1}. {p['pregunta']}", color="white", weight=ft.FontWeight.BOLD))
-            controles_examen.append(ft.TextField(hint_text="Tu respuesta...", width=300))
+            controles_examen.append(ft.TextField(hint_text="Escribe tu respuesta aquí...", width=400, multiline=True))
             controles_examen.append(ft.Container(height=10))
 
+        controles_examen.append(ft.Container(height=20))
         controles_examen.append(ft.Button("Volver al Mapa", on_click=lambda e: mostrar_mapa()))
 
         page.add(
@@ -170,6 +169,5 @@ def main(page: ft.Page):
 
     mostrar_mapa()
 
-# Ejecución adaptada a Flet 1.0
 if __name__ == "__main__":
     ft.run(main, view=None, port=int(os.environ.get("PORT", 8080)))
