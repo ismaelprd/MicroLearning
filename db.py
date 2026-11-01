@@ -89,6 +89,17 @@ def init_db():
         )"""
     )
     _ejecutar(
+        """CREATE TABLE IF NOT EXISTS pendientes (
+            usuario TEXT NOT NULL,
+            nivel INTEGER NOT NULL,
+            titulo TEXT NOT NULL,
+            texto TEXT NOT NULL,
+            imagen_url TEXT,
+            categoria TEXT,
+            PRIMARY KEY (usuario, nivel)
+        )"""
+    )
+    _ejecutar(
         """CREATE TABLE IF NOT EXISTS examenes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             usuario TEXT NOT NULL,
@@ -115,11 +126,33 @@ def listar_temas(nombre):
     return [{"titulo": f[0], "texto": f[1], "imagen_url": f[2], "nivel": f[3]} for f in filas]
 
 
+def guardar_pendiente(nombre, nivel, titulo, texto, imagen_url, categoria):
+    """Guarda la historia generada para un nivel aún sin completar."""
+    _ejecutar(
+        "INSERT OR REPLACE INTO pendientes (usuario, nivel, titulo, texto, imagen_url, categoria) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        [nombre, nivel, titulo, texto, imagen_url, categoria],
+    )
+
+
+def cargar_pendiente(nombre, nivel):
+    """Devuelve la historia ya generada para ese nivel, o None si no hay."""
+    filas = _ejecutar(
+        "SELECT titulo, texto, imagen_url, categoria FROM pendientes WHERE usuario = ? AND nivel = ?",
+        [nombre, nivel],
+    )
+    if not filas:
+        return None
+    f = filas[0]
+    return {"titulo": f[0], "texto": f[1], "imagen_url": f[2], "categoria": f[3]}
+
+
 def guardar_tema_y_progreso(nombre, nivel_completado, titulo, texto, imagen_url, nuevo_nivel, estrellas):
     _ejecutar(
         "INSERT INTO temas (usuario, nivel, titulo, texto, imagen_url) VALUES (?, ?, ?, ?, ?)",
         [nombre, nivel_completado, titulo, texto, imagen_url],
     )
+    _ejecutar("DELETE FROM pendientes WHERE usuario = ? AND nivel = ?", [nombre, nivel_completado])
     _ejecutar(
         "UPDATE usuarios SET nivel = ?, estrellas = ? WHERE nombre = ?",
         [nuevo_nivel, estrellas, nombre],

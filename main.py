@@ -131,7 +131,7 @@ def main(page: ft.Page):
         mostrar(
             ft.Container(height=60),
             ft.Icon(ft.Icons.AUTO_STORIES, color=AMBAR, size=64),
-            txt("Cultura general", size=38, weight=ft.FontWeight.BOLD, align=ft.TextAlign.CENTER),
+            txt("GenK", size=44, weight=ft.FontWeight.BOLD, align=ft.TextAlign.CENTER),
             txt(
                 "Una historia curiosa por nivel. Tu progreso se guarda con tu nombre.",
                 color=APAGADO, align=ft.TextAlign.CENTER,
@@ -278,9 +278,32 @@ def main(page: ft.Page):
 
     # ── Aprendizaje ─────────────────────────────────────────────────────────
     async def iniciar_aprendizaje(e=None):
-        mostrar_cargando("Buscando una historia que no conoces...")
-        titulos = [t["titulo"] for t in sesion["temas"]]
-        contenido = await asyncio.to_thread(ia.generar_microaprendizaje, sesion["nivel"], titulos)
+        nivel = sesion["nivel"]
+
+        # 1) ¿Ya se generó la historia de este nivel? Se reutiliza tal cual.
+        contenido = None
+        if sesion.get("contenido") and sesion.get("contenido_nivel") == nivel:
+            contenido = sesion["contenido"]
+        else:
+            mostrar_cargando("Abriendo tu historia...")
+            try:
+                contenido = await asyncio.to_thread(db.cargar_pendiente, sesion["usuario"], nivel)
+            except Exception as ex:
+                print(f"No se pudo leer la historia pendiente: {ex}")
+
+        # 2) Si no existe, se genera y se guarda al momento.
+        if not contenido:
+            mostrar_cargando("Buscando una historia que no conoces...")
+            titulos = [t["titulo"] for t in sesion["temas"]]
+            contenido = await asyncio.to_thread(ia.generar_microaprendizaje, nivel, titulos)
+            if not contenido.get("error"):
+                try:
+                    await asyncio.to_thread(
+                        db.guardar_pendiente, sesion["usuario"], nivel, contenido["titulo"],
+                        contenido["texto"], contenido.get("imagen_url"), contenido.get("categoria"),
+                    )
+                except Exception as ex:
+                    print(f"No se pudo guardar la historia pendiente: {ex}")
 
         if contenido.get("error"):
             mostrar(
@@ -294,6 +317,7 @@ def main(page: ft.Page):
             return
 
         sesion["contenido"] = contenido
+        sesion["contenido_nivel"] = nivel
         vista_lectura(
             contenido,
             [ft.Container(height=8), boton("Terminar y ganar una estrella", completar_nivel)],
