@@ -44,7 +44,7 @@ def main(page: ft.Page):
                 width=80, height=80,
                 bgcolor=bgcolor,
                 border_radius=40,
-                alignment=ft.alignment.center,
+                alignment=ft.Alignment.CENTER,,
                 on_click=on_click,
                 ink=True
             )
@@ -52,7 +52,7 @@ def main(page: ft.Page):
             if i < 5:
                 conector = ft.Container(
                     content=ft.Icon(ft.Icons.SOUTH, color="#555555", size=30),
-                    alignment=ft.alignment.center,
+                    alignment=ft.Alignment.CENTER,,
                     margin=ft.margin.only(top=10, bottom=10)
                 )
                 nodos.append(nodo)
