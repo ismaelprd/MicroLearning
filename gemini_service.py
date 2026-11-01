@@ -10,7 +10,6 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 MODEL_ID = "gemini-3.5-flash-lite"
 
 def buscar_imagen_wikipedia(tema):
-    """Busca una imagen en Wikipedia. Si falla, devuelve None."""
     try:
         headers = {'User-Agent': 'MiAppCultura/1.0 (test@example.com)'}
         url_busqueda = f"https://es.wikipedia.org/w/api.php?action=query&list=search&srsearch={tema}&format=json&utf8=1&srlimit=1"
@@ -31,16 +30,29 @@ def buscar_imagen_wikipedia(tema):
         print(f"Error buscando imagen: {e}")
     return None
 
-def generar_microaprendizaje(nivel):
-    """Genera una píldora un poco más larga (aprox 350 palabras)."""
-    prompt = f"""
-    Eres un experto divulgador de cultura general. Genera un microaprendizaje para el nivel {nivel} de una app.
-    Elige un tema fascinante (hecho histórico, científico, personaje, arte, etc.) que sea sorprendente.
+def generar_microaprendizaje(nivel, temas_previos):
+    """Genera una píldora única, sorprendente y dinámica."""
     
-    Requisitos:
-    1. Escribe un texto ameno y narrativo de aproximadamente 350 palabras (unos 2 minutos y medio de lectura).
-    2. Incluye un título llamativo.
-    3. Al final, proporciona una palabra clave exacta (en español) para buscar una imagen representativa en Wikipedia.
+    # Convertimos el historial en un texto para que la IA sepa qué NO decir
+    historial = ", ".join(temas_previos) if temas_previos else "Ninguno (es el primer nivel)"
+    
+    # Rotamos la categoría según el nivel para forzar variedad
+    categorias = ["Ciencia asombrosa", "Historia oculta", "Arte y símbolos", "Filosofía y mente", "Tecnología y futuro", "Anatomía de la cultura"]
+    categoria_actual = categorias[(nivel - 1) % len(categorias)]
+
+    prompt = f"""
+    Eres un experto divulgador de cultura general. Genera una píldora de conocimiento para una app.
+    
+    Temas ya aprendidos (PROHIBIDO HABLAR DE ELLOS O REPETIRLOS): {historial}
+    
+    REQUISITOS ESTRICTOS:
+    1. Categoría de este nivel: {categoria_actual}.
+    2. NO uses efemérides (prohibido empezar con "El día que...", "Un día como hoy..." o "En 1492...").
+    3. Busca un dato CONTRATINTUITIVO, un misterio, un error histórico famoso o un concepto que haga decir "No tenía ni idea".
+    4. Envuelve el concepto clave del texto en etiquetas HTML <b> e </b> para dar énfasis (Flet lo soporta). Usa 2 o 3 negritas por texto.
+    5. Extensión: 300 - 350 palabras. Tono: ameno, casi como un podcast o un buen hilo de Twitter.
+    6. Título corto, magnético y sin clickbait barato (máx 6 palabras).
+    7. Proporciona una palabra clave en español para buscar la imagen en Wikipedia.
     
     Devuelve la respuesta ÚNICAMENTE en formato JSON con las claves: "titulo", "texto", "palabra_clave_imagen".
     """
@@ -66,7 +78,6 @@ def generar_microaprendizaje(nivel):
         }
 
 def generar_quiz(temas_previos):
-    """Genera un quiz variado basado en los temas aprendidos."""
     contexto = "Temas aprendidos previamente: " + ", ".join(temas_previos)
     
     prompt = f"""
