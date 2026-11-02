@@ -108,6 +108,55 @@ def init_db():
             creado TEXT DEFAULT CURRENT_TIMESTAMP
         )"""
     )
+    # Palabras/frases que el usuario toca mientras lee (para el test de vocabulario).
+    _ejecutar(
+        """CREATE TABLE IF NOT EXISTS palabras (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            usuario TEXT NOT NULL,
+            termino TEXT NOT NULL,
+            traduccion TEXT NOT NULL,
+            frase TEXT,
+            nivel INTEGER,
+            es_frase INTEGER NOT NULL DEFAULT 0,
+            veces INTEGER NOT NULL DEFAULT 1,
+            creado TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (usuario, termino)
+        )"""
+    )
+    # Migración: distinguir examen de historias y test de vocabulario.
+    try:
+        _ejecutar("ALTER TABLE examenes ADD COLUMN tipo TEXT DEFAULT 'historias'")
+    except Exception:
+        pass  # la columna ya existe
+
+    _reparar_temas()
+
+
+def _reparar_temas():
+    """Limpia historias duplicadas de versiones anteriores y blinda la tabla.
+
+    Es idempotente: si no hay duplicados, no cambia nada.
+    """
+    # 1) Mismo usuario + mismo título = la misma historia guardada dos veces.
+    _ejecutar("DELETE FROM temas WHERE id NOT IN (SELECT MIN(id) FROM temas GROUP BY usuario, titulo)")
+    # 2) Niveles consecutivos 1, 2, 3... según el orden en que se completaron.
+    _ejecutar(
+        "UPDATE temas SET nivel = "
+        "(SELECT COUNT(*) FROM temas t2 WHERE t2.usuario = temas.usuario AND t2.id <= temas.id)"
+    )
+    # 3) Nivel y estrellas coherentes con las historias realmente guardadas.
+    _ejecutar(
+        "UPDATE usuarios SET "
+        "nivel = (SELECT COUNT(*) FROM temas t WHERE t.usuario = usuarios.nombre) + 1, "
+        "estrellas = (SELECT COUNT(*) FROM temas t WHERE t.usuario = usuarios.nombre)"
+    )
+    # 4) Historias pendientes de niveles que ya están completados.
+    _ejecutar(
+        "DELETE FROM pendientes WHERE nivel <= "
+        "(SELECT COUNT(*) FROM temas t WHERE t.usuario = pendientes.usuario)"
+    )
+    # 5) A partir de ahora la base de datos no admite dos veces el mismo nivel.
+    _ejecutar("CREATE UNIQUE INDEX IF NOT EXISTS idx_temas_usuario_nivel ON temas (usuario, nivel)")
 
 
 def cargar_usuario(nombre):
@@ -115,7 +164,8 @@ def cargar_usuario(nombre):
     _ejecutar("INSERT OR IGNORE INTO usuarios (nombre) VALUES (?)", [nombre])
     fila = _ejecutar("SELECT nivel, estrellas FROM usuarios WHERE nombre = ?", [nombre])[0]
     temas = listar_temas(nombre)
-    return {"nivel": fila[0], "estrellas": fila[1], "temas": temas}
+    palabras = {p["termino"]: p for p in listar_palabras(nombre)}
+    return {"nivel": fila[0], "estrellas": fila[1], "temas": temas, "palabras": palabras}
 
 
 def listar_temas(nombre):
@@ -147,20 +197,52 @@ def cargar_pendiente(nombre, nivel):
     return {"titulo": f[0], "texto": f[1], "imagen_url": f[2], "categoria": f[3]}
 
 
-def guardar_tema_y_progreso(nombre, nivel_completado, titulo, texto, imagen_url, nuevo_nivel, estrellas):
+def guardar_tema_y_progreso(nombre, nivel_completado, titulo, texto, imagen_url):
+    """Guarda la historia completada y devuelve (nuevo_nivel, estrellas).
+
+    Es idempotente: si ese nivel ya estaba guardado no se duplica, y el nivel/estrellas
+    se calculan a partir de las historias realmente guardadas (no se suman a ciegas).
+    """
     _ejecutar(
-        "INSERT INTO temas (usuario, nivel, titulo, texto, imagen_url) VALUES (?, ?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO temas (usuario, nivel, titulo, texto, imagen_url) VALUES (?, ?, ?, ?, ?)",
         [nombre, nivel_completado, titulo, texto, imagen_url],
     )
     _ejecutar("DELETE FROM pendientes WHERE usuario = ? AND nivel = ?", [nombre, nivel_completado])
+    total = _ejecutar("SELECT COUNT(*) FROM temas WHERE usuario = ?", [nombre])[0][0]
     _ejecutar(
         "UPDATE usuarios SET nivel = ?, estrellas = ? WHERE nombre = ?",
-        [nuevo_nivel, estrellas, nombre],
+        [total + 1, total, nombre],
     )
+    return total + 1, total
 
 
-def guardar_examen(nombre, aciertos, total):
+def guardar_examen(nombre, aciertos, total, tipo="historias"):
     _ejecutar(
-        "INSERT INTO examenes (usuario, aciertos, total) VALUES (?, ?, ?)",
-        [nombre, aciertos, total],
+        "INSERT INTO examenes (usuario, aciertos, total, tipo) VALUES (?, ?, ?, ?)",
+        [nombre, aciertos, total, tipo],
     )
+
+
+# ── Vocabulario ──────────────────────────────────────────────────────────────
+def guardar_palabra(nombre, termino, traduccion, frase, nivel, es_frase=False):
+    """Guarda una palabra/frase tocada. Si ya existía, suma una consulta y actualiza el contexto."""
+    _ejecutar(
+        "INSERT INTO palabras (usuario, termino, traduccion, frase, nivel, es_frase) "
+        "VALUES (?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT (usuario, termino) DO UPDATE SET "
+        "veces = veces + 1, traduccion = excluded.traduccion, frase = excluded.frase",
+        [nombre, termino, traduccion, frase, nivel, 1 if es_frase else 0],
+    )
+
+
+def listar_palabras(nombre):
+    filas = _ejecutar(
+        "SELECT termino, traduccion, frase, nivel, es_frase, veces FROM palabras "
+        "WHERE usuario = ? ORDER BY veces DESC, id DESC",
+        [nombre],
+    )
+    return [
+        {"termino": f[0], "traduccion": f[1], "frase": f[2], "nivel": f[3],
+         "es_frase": bool(f[4]), "veces": f[5]}
+        for f in filas
+    ]
