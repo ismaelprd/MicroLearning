@@ -13,7 +13,10 @@ MODEL_ID = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
 # Nivel de inglés de las historias (escala MCER). Se puede cambiar con la variable NIVEL_INGLES.
 NIVEL_INGLES = os.environ.get("NIVEL_INGLES", "B2")
 
-TEST_VOCAB_PREGUNTAS = 10
+TEST_VOCAB_EN_ES = 2      # frases en inglés que el alumno traduce al español
+TEST_VOCAB_ES_EN = 3      # frases en español que el alumno traduce al inglés
+TEST_VOCAB_PREGUNTAS = TEST_VOCAB_EN_ES + TEST_VOCAB_ES_EN
+TEST_VOCAB_POOL = 8       # palabras al azar (de TODAS las guardadas) con las que se montan las frases
 QUIZ_HISTORIAS_MUESTRA = 5
 
 GUIA_CATEGORIAS = {
@@ -241,66 +244,98 @@ def generar_quiz(temas):
 
 # ── Test de vocabulario ──────────────────────────────────────────────────────
 def generar_test_vocabulario(palabras):
-    """10 frases NUEVAS en inglés que contienen palabras/frases que el usuario tocó.
+    """5 ejercicios: 2 de inglés → español y 3 de español → inglés.
 
-    `palabras` es la lista de dicts {"termino", "traduccion", ...} guardados en la base de datos.
-    Devuelve {"preguntas": [{"termino", "frase", "traduccion_referencia"}]}.
+    Las palabras se eligen al azar entre TODAS las guardadas (no las últimas) y una misma frase
+    puede trabajar varias de ellas. Devuelve
+    {"preguntas": [{"direccion", "terminos", "termino", "frase", "traduccion_referencia"}]}.
     """
-    muestra = random.sample(palabras, min(TEST_VOCAB_PREGUNTAS, len(palabras)))
+    muestra = random.sample(palabras, min(TEST_VOCAB_POOL, len(palabras)))
     lineas = "\n".join(f'- "{p["termino"]}" (significa: {p["traduccion"]})' for p in muestra)
 
     prompt = f"""
     Eres profesor de inglés para hispanohablantes. El alumno ha consultado estas palabras o expresiones
-    mientras leía:
+    inglesas mientras leía:
 
     {lineas}
 
-    Crea EXACTAMENTE {TEST_VOCAB_PREGUNTAS} ejercicios de traducción inglés → español.
-    - Cada ejercicio es una frase NUEVA en inglés (8 a 18 palabras, nivel {NIVEL_INGLES}) que contenga el término.
-      No copies frases de ninguna lección: invéntalas con un contexto distinto.
-    - Si hay menos de {TEST_VOCAB_PREGUNTAS} términos, reutiliza términos en frases y contextos distintos.
-    - Si el término es una frase entera, escribe una frase nueva que use esa misma expresión o idea.
-    - Sin frases repetidas. Cada una debe tener sentido por sí sola.
-    - "traduccion_referencia": una traducción natural de la frase al español.
+    Crea EXACTAMENTE {TEST_VOCAB_PREGUNTAS} ejercicios. Cada ejercicio es una frase NUEVA en inglés
+    (8 a 18 palabras, nivel {NIVEL_INGLES}) junto con su traducción natural al español.
+    - Cada frase debe contener al menos uno de los términos de la lista, tal cual (puedes conjugarlo o
+      ponerlo en plural). Una misma frase PUEDE incluir varios términos de la lista si encajan con naturalidad.
+    - Procura que entre todas las frases se trabajen la mayoría de los términos de la lista.
+    - No copies frases de ninguna lección: invéntalas con contextos distintos. Sin frases repetidas.
+    - Cada frase debe tener sentido por sí sola.
 
     Devuelve ÚNICAMENTE un JSON con la lista "preguntas"; cada elemento con las claves
-    "termino" (el término trabajado), "frase" (la frase en inglés) y "traduccion_referencia".
+    "terminos" (lista con los términos de la lista que usa la frase, escritos como aparecen arriba),
+    "frase_en" (la frase en inglés) y "frase_es" (su traducción al español).
     """
 
     try:
         datos = _pedir_json(prompt)
         validas = [
             p for p in datos.get("preguntas", [])
-            if p.get("frase") and p.get("traduccion_referencia")
-        ]
-        return {"preguntas": validas[:TEST_VOCAB_PREGUNTAS]}
+            if str(p.get("frase_en", "")).strip() and str(p.get("frase_es", "")).strip()
+        ][:TEST_VOCAB_PREGUNTAS]
+
+        # La dirección la decide el código (no la IA): 2 en → es y 3 es → en, en orden aleatorio.
+        direcciones = ["en_es"] * TEST_VOCAB_EN_ES + ["es_en"] * TEST_VOCAB_ES_EN
+        random.shuffle(direcciones)
+
+        preguntas = []
+        for p, direccion in zip(validas, direcciones):
+            terminos = p.get("terminos") or []
+            if isinstance(terminos, str):
+                terminos = [terminos]
+            terminos = [str(t).strip() for t in terminos if str(t).strip()]
+            en, es = str(p["frase_en"]).strip(), str(p["frase_es"]).strip()
+            preguntas.append({
+                "direccion": direccion,
+                "terminos": terminos,
+                "termino": ", ".join(terminos),
+                "frase": en if direccion == "en_es" else es,
+                "traduccion_referencia": es if direccion == "en_es" else en,
+            })
+        return {"preguntas": preguntas}
     except Exception as e:
         print(f"Error generando test de vocabulario: {e}")
         return {"preguntas": []}
 
 
 def corregir_traducciones(items):
-    """Corrige traducciones inglés → español del alumno.
+    """Corrige las traducciones del alumno (inglés → español o español → inglés).
 
-    `items`: lista de dicts {"termino", "frase", "referencia", "respuesta"}.
+    `items`: lista de dicts {"termino", "frase", "referencia", "respuesta", "direccion"}
+    con direccion "en_es" (frase en inglés, responde en español) o "es_en" (al revés).
     Devuelve una lista [{"correcta": bool, "comentario": str}] en el mismo orden, o None si falla.
     """
     if not items:
         return []
-    bloques = "\n\n".join(
-        f'{i}. Frase: "{it["frase"]}"\n   Término clave: "{it["termino"]}"\n'
-        f'   Traducción de referencia: "{it["referencia"]}"\n   Traducción del alumno: "{it["respuesta"]}"'
-        for i, it in enumerate(items, start=1)
-    )
+
+    def bloque(i, it):
+        es_en = it.get("direccion") == "es_en"
+        origen, destino = ("español", "inglés") if es_en else ("inglés", "español")
+        return (
+            f'{i}. Frase en {origen}: "{it["frase"]}"\n'
+            f'   Palabras clave trabajadas (en inglés): "{it["termino"]}"\n'
+            f'   Traducción de referencia al {destino}: "{it["referencia"]}"\n'
+            f'   Traducción del alumno al {destino}: "{it["respuesta"]}"'
+        )
+
+    bloques = "\n\n".join(bloque(i, it) for i, it in enumerate(items, start=1))
 
     prompt = f"""
-    Corrige estas traducciones inglés → español hechas por un alumno.
+    Corrige estas traducciones hechas por un alumno hispanohablante que estudia inglés.
+    Cada ejercicio indica el idioma de la frase original y el idioma en el que debía responder.
 
     {bloques}
 
     Para cada ejercicio decide si la traducción del alumno es correcta:
     - Acepta sinónimos, otro orden de palabras y pequeñas faltas de ortografía o de tildes.
-    - Marca incorrecta si traduce mal el término clave o si cambia el sentido de la frase.
+    - Marca incorrecta si traduce mal las palabras clave o si cambia el sentido de la frase.
+    - En los ejercicios al inglés, la gramática debe ser razonablemente correcta y debe usar la palabra
+      clave (o un sinónimo muy claro); una frase en español o a medio traducir es incorrecta.
     - La traducción de referencia es solo UNA de las traducciones posibles.
 
     Devuelve ÚNICAMENTE un JSON con la lista "resultados": un objeto por ejercicio, EN EL MISMO ORDEN,
@@ -317,4 +352,51 @@ def corregir_traducciones(items):
         ]
     except Exception as e:
         print(f"Error corrigiendo traducciones: {e}")
+        return None
+
+
+# ── Corrección con IA del examen de historias ────────────────────────────────
+def corregir_respuestas_examen(items):
+    """Corrige con IA las respuestas escritas (completar y redactar) del examen de historias.
+
+    `items`: lista de dicts {"tipo", "pregunta", "referencia", "respuesta"}.
+    Devuelve [{"correcta": bool, "comentario": str}] en el mismo orden, o None si falla.
+    """
+    if not items:
+        return []
+    bloques = "\n\n".join(
+        f'{i}. Tipo: {it["tipo"]}\n   Pregunta: "{it["pregunta"]}"\n'
+        f'   Respuesta de referencia: "{it["referencia"]}"\n   Respuesta del alumno: "{it["respuesta"]}"'
+        for i, it in enumerate(items, start=1)
+    )
+
+    prompt = f"""
+    Corrige las respuestas escritas de un alumno hispanohablante que estudia en inglés. Las preguntas
+    y las respuestas están en inglés.
+
+    {bloques}
+
+    Para cada ejercicio decide si la respuesta del alumno es correcta:
+    - "completar": acepta sinónimos, formas equivalentes (singular/plural, mayúsculas) y pequeñas
+      faltas de ortografía si queda claro que es la misma idea. Marca incorrecta si el concepto es otro.
+    - "redactar": acepta cualquier respuesta que recoja la idea esencial de la referencia, aunque use
+      otras palabras o sea más corta o más larga. Marca incorrecta si es vaga, contradice la referencia
+      o no responde a lo preguntado.
+    - No penalices pequeños errores gramaticales si el contenido es correcto.
+    - La respuesta de referencia es solo UNA de las respuestas posibles.
+
+    Devuelve ÚNICAMENTE un JSON con la lista "resultados": un objeto por ejercicio, EN EL MISMO ORDEN,
+    con "correcta" (true/false) y "comentario" (una frase corta en español; si es incorrecta, explica el fallo).
+    """
+
+    try:
+        resultados = _pedir_json(prompt).get("resultados", [])
+        if len(resultados) != len(items):
+            return None
+        return [
+            {"correcta": bool(r.get("correcta")), "comentario": str(r.get("comentario", "")).strip()}
+            for r in resultados
+        ]
+    except Exception as e:
+        print(f"Error corrigiendo examen: {e}")
         return None

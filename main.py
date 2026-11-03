@@ -667,7 +667,21 @@ async def main(page: ft.Page):
             tipo = p.get("tipo", "")
             if tipo in ("opcion_multiple", "verdadero_falso"):
                 opciones = p.get("opciones") or ["Verdadero", "Falso"]
-                grupo = ft.RadioGroup(content=ft.Column([ft.Radio(value=o, label=o) for o in opciones]))
+                grupo = ft.RadioGroup(content=ft.Column([]))
+
+                def fila_opcion(o, g=grupo):
+                    # El texto va aparte del Radio para que salte de línea en vez de cortarse por la derecha.
+                    def elegir(e, o=o, g=g):
+                        g.value = o
+                        g.update()
+                    return ft.Row(
+                        [ft.Radio(value=o),
+                         ft.Container(txt(o, size=15), expand=True, on_click=elegir, padding=ft.padding.only(top=10))],
+                        vertical_alignment=ft.CrossAxisAlignment.START,
+                        spacing=4,
+                    )
+
+                grupo.content = ft.Column([fila_opcion(o) for o in opciones], spacing=2)
                 entradas.append((p, lambda g=grupo: g.value))
                 control = grupo
             else:
@@ -683,17 +697,40 @@ async def main(page: ft.Page):
             )
 
         async def corregir(e):
-            resultados, aciertos, total = [], 0, 0
-            for p, leer in entradas:
-                dada = leer() or ""
+            dadas = [(leer() or "").strip() for _, leer in entradas]  # se leen antes de cambiar de pantalla
+            mostrar_cargando("Corrigiendo tus respuestas...")
+
+            # Las preguntas de escribir (completar y redactar) las corrige la IA; el resto, por coincidencia.
+            abiertas = [
+                {"tipo": p.get("tipo"), "pregunta": p["pregunta"],
+                 "referencia": p.get("respuesta_correcta", ""), "respuesta": d}
+                for (p, _), d in zip(entradas, dadas)
+                if p.get("tipo") in ("completar", "redactar") and d
+            ]
+            evaluaciones = await asyncio.to_thread(ia.corregir_respuestas_examen, abiertas) if abiertas else []
+            siguiente = iter(evaluaciones) if evaluaciones is not None else None
+
+            resultados, aciertos, total = [], 0, len(entradas)
+            for (p, _), dada in zip(entradas, dadas):
                 correcta = p.get("respuesta_correcta", "")
-                if p.get("tipo") == "redactar":
-                    estado = None  # respuesta abierta: se autoevalúa
+                comentario = ""
+                if p.get("tipo") in ("completar", "redactar"):
+                    if not dada:
+                        estado = False
+                    elif siguiente is not None:
+                        ev = next(siguiente)
+                        estado, comentario = ev["correcta"], ev["comentario"]
+                    elif p.get("tipo") == "completar":
+                        # Sin IA: se compara el texto.
+                        estado = normalizar(dada) == normalizar(correcta)
+                    else:
+                        estado = None  # redactar sin IA: se autoevalúa
+                        comentario = "No se pudo corregir automáticamente: compárala con la referencia."
                 else:
-                    total += 1
                     estado = normalizar(dada) == normalizar(correcta)
-                    aciertos += 1 if estado else 0
-                resultados.append((p, dada, correcta, estado))
+                if estado is True:
+                    aciertos += 1
+                resultados.append((p, dada, correcta, estado, comentario))
 
             aviso = ""
             try:
@@ -702,7 +739,7 @@ async def main(page: ft.Page):
                 aviso = f"No se pudo guardar el resultado: {ex}"
 
             filas = []
-            for p, dada, correcta, estado in resultados:
+            for p, dada, correcta, estado, comentario in resultados:
                 icono, color = (
                     (ft.Icons.CHECK_CIRCLE, TURQUESA) if estado is True
                     else (ft.Icons.CANCEL, ERROR) if estado is False
@@ -712,6 +749,8 @@ async def main(page: ft.Page):
                 if estado is not True:
                     detalle.append(txt(f"Tu respuesta: {dada or '(en blanco)'}", size=14, color=APAGADO))
                     detalle.append(txt(f"Respuesta de referencia: {correcta}", size=14, color=TEXTO))
+                if comentario:
+                    detalle.append(txt(comentario, size=13, color=APAGADO))
                 filas.append(
                     tarjeta(ft.Row([ft.Icon(icono, color=color, size=28),
                                     ft.Column(detalle, spacing=4, expand=True)],
@@ -723,9 +762,7 @@ async def main(page: ft.Page):
                 tarjeta(
                     ft.Column(
                         [txt(f"{aciertos} de {total}", size=44, weight=ft.FontWeight.BOLD, color=AMBAR),
-                         txt("respuestas correctas", color=APAGADO),
-                         txt("La pregunta de redactar no puntúa: compárala con la respuesta de referencia.",
-                             size=13, color=APAGADO)],
+                         txt("respuestas correctas", color=APAGADO)],
                         horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=4,
                     ),
                     width=ancho(),
@@ -766,15 +803,17 @@ async def main(page: ft.Page):
 
         campos, tarjetas = [], []
         for idx, p in enumerate(preguntas, start=1):
+            al_ingles = p.get("direccion") == "es_en"
             campo = ft.TextField(
-                hint_text="Tradúcela al español", bgcolor=TINTA, border_color=SUPERFICIE_2,
+                hint_text="Tradúcela al inglés" if al_ingles else "Tradúcela al español",
+                bgcolor=TINTA, border_color=SUPERFICIE_2,
                 focused_border_color=AMBAR, border_radius=12, multiline=True, min_lines=2,
             )
             campos.append(campo)
             tarjetas.append(
                 tarjeta(
                     ft.Column(
-                        [txt(f"{idx}. Traduce al español", size=13, color=APAGADO),
+                        [txt(f"{idx}. Traduce al inglés" if al_ingles else f"{idx}. Traduce al español", size=13, color=APAGADO),
                          txt(p["frase"], size=17, weight=ft.FontWeight.BOLD),
                          campo],
                         spacing=10,
@@ -789,7 +828,8 @@ async def main(page: ft.Page):
             # Las respuestas en blanco son fallo directo; el resto las corrige la IA.
             a_corregir = [
                 {"termino": p.get("termino", ""), "frase": p["frase"],
-                 "referencia": p["traduccion_referencia"], "respuesta": r}
+                 "referencia": p["traduccion_referencia"], "respuesta": r,
+                 "direccion": p.get("direccion", "en_es")}
                 for p, r in zip(preguntas, respuestas) if r
             ]
             evaluaciones = await asyncio.to_thread(ia.corregir_traducciones, a_corregir)
@@ -829,7 +869,7 @@ async def main(page: ft.Page):
                     detalle.append(txt(f"Tu traducción: {r or '(en blanco)'}", size=14, color=APAGADO))
                 detalle.append(txt(f"Referencia: {p['traduccion_referencia']}", size=14))
                 if p.get("termino"):
-                    detalle.append(txt(f"Palabra trabajada: {p['termino']}", size=12, color=AZUL))
+                    detalle.append(txt(f"Palabras trabajadas: {p['termino']}", size=12, color=AZUL))
                 if ev["comentario"]:
                     detalle.append(txt(ev["comentario"], size=13, color=APAGADO))
                 filas.append(
@@ -856,7 +896,7 @@ async def main(page: ft.Page):
         mostrar(
             barra_volver(mostrar_mapa),
             txt("Test de vocabulario", size=28, weight=ft.FontWeight.BOLD),
-            txt("Frases nuevas con las palabras que has tocado.", size=13, color=APAGADO),
+            txt("5 frases con palabras que has tocado: 2 al español y 3 al inglés.", size=13, color=APAGADO),
             *tarjetas,
             boton("Corregir", corregir),
         )
